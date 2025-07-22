@@ -10,7 +10,7 @@ BASE_URL = "https://fapi.bitunix.com"
 
 # === FUNCTION TO GET CANDLESTICK DATA ===
 def get_candles(symbol, interval="15m", limit=100):
-    url = f"{BASE_URL}/api/v1/futures/market/kline"
+    url = f"{BASE_URL}/v1/market/kline"
     params = {"symbol": symbol.lower(), "interval": interval, "limit": limit}
     res = requests.get(url, params=params)
 
@@ -24,8 +24,19 @@ def get_candles(symbol, interval="15m", limit=100):
         print(f"[ERROR] Unexpected response structure for {symbol}: {data}")
         return []
 
-    candles = data["data"]
-    return [[float(c) for c in item] for item in candles if len(item) >= 5]
+    raw_candles = data["data"]
+
+    # Filter out any header rows or invalid rows
+    candles = []
+    for row in raw_candles:
+        if isinstance(row[1], str) and row[1].lower() == "open":
+            continue  # Skip header
+        try:
+            candles.append([float(x) for x in row])
+        except ValueError:
+            continue
+
+    return candles
 
 # === SMART MONEY + FIBONACCI STRATEGY ===
 def analyze_smc_fibo(candles):
