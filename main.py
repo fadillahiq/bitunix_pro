@@ -10,7 +10,7 @@ BASE_URL = "https://fapi.bitunix.com"
 
 # === FUNCTION TO GET CANDLESTICK DATA ===
 def get_candles(symbol, interval="15m", limit=100):
-    url = f"{BASE_URL}/v1/market/kline"
+    url = f"{BASE_URL}/api/v1/futures/market/kline"
     params = {"symbol": symbol.lower(), "interval": interval, "limit": limit}
     res = requests.get(url, params=params)
 
