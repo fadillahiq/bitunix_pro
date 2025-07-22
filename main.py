@@ -3,14 +3,18 @@ import requests, time
 from datetime import datetime
 
 # === CONFIGURATION ===
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al"
-PAIRS = ["AAVEUSDT", "MATICUSDT", "XRPUSDT"]  # Altcoin stabil
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al" # Altcoin stabil
 TIMEFRAME = "15m"
-BASE_URL = "https://api.bitunix.com"
+PAIRS = [
+    "ETHUSDT", "BTCUSDT", "AAVEUSDT", "DOGEUSDT", "XRPUSDT",
+    "MATICUSDT", "SUIUSDT", "OPUSDT", "HBARUSDT", "PEPEUSDT",
+    "ARBUSDT", "INJUSDT", "RNDRUSDT", "LINKUSDT", "NEARUSDT"
+]
+API = "https://fapi.bitunix.com/api/v1/futures/market/kline"
 
 # === FUNCTION TO GET CANDLESTICK DATA ===
 def get_candles(symbol, interval="15m", limit=100):
-    url = f"{BASE_URL}/v1/market/kline"
+    url = {API}
     params = {"symbol": symbol.lower(), "interval": interval, "limit": limit}
     res = requests.get(url, params=params).json()
     candles = res.get("data", [])
