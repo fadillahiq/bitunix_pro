@@ -10,7 +10,7 @@ BASE_URL = "https://fapi.bitunix.com"
 
 # === GET CANDLE DATA FROM BITUNIX ===
 def get_candles(symbol, interval="15m", limit=100):
-    url = f"{BASE_URL}/api/v1/market/candles"
+    url = "https://fapi.bitunix.com/api/v1/futures/market/kline"
     params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
     res = requests.get(url, params=params)
 
