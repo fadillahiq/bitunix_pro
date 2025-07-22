@@ -1,134 +1,86 @@
-from fastapi import FastAPI
-import requests, time, asyncio
+
+import requests, time
 from datetime import datetime
-import numpy as np
-import uvicorn
-import os
 
-app = FastAPI()
+# === CONFIGURATION ===
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al"
+PAIRS = ["AAVEUSDT", "MATICUSDT", "XRPUSDT"]  # Altcoin stabil
+TIMEFRAME = "15m"
+BASE_URL = "https://api.bitunix.com"
 
-# ===== CONFIG =====
-TELEGRAM_BOT_TOKEN = '7580552170:AAEGs8Z4HVhZgtnzRaK4VctZe6_fUL0pkz8'
-TELEGRAM_CHAT_ID = '5246334675'
-DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al'
+# === FUNCTION TO GET CANDLESTICK DATA ===
+def get_candles(symbol, interval="15m", limit=100):
+    url = f"{BASE_URL}/v1/market/kline"
+    params = {"symbol": symbol.lower(), "interval": interval, "limit": limit}
+    res = requests.get(url, params=params).json()
+    candles = res.get("data", [])
+    return [[float(c) for c in item] for item in candles]
 
-# ALTCOIN LIST - tambahkan sesuai kebutuhan
-SYMBOLS = [
-    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'MATICUSDT',
-    'AVAXUSDT', 'DOGEUSDT', 'OPUSDT', 'LTCUSDT', 'AAVEUSDT',
-    'ARBUSDT', 'SUIUSDT', 'BLURUSDT', 'INJUSDT', 'RNDRUSDT',
-    'PEPEUSDT', 'FLOKIUSDT', 'BCHUSDT', 'GRTUSDT', 'APTUSDT'
-]
+# === SMART MONEY + FIBONACCI STRATEGY ===
+def analyze_smc_fibo(candles):
+    highs = [c[2] for c in candles]
+    lows = [c[3] for c in candles]
+    close = candles[-1][4]
 
-TIMEFRAMES = ['15m', '4h']
+    swing_high = max(highs[-20:])
+    swing_low = min(lows[-20:])
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    requests.post(url, data=data)
+    fib_618 = swing_low + 0.618 * (swing_high - swing_low)
+    fib_50 = swing_low + 0.5 * (swing_high - swing_low)
 
-def send_discord(message):
-    data = {"content": message}
-    requests.post(DISCORD_WEBHOOK_URL, json=data)
+    # Detect BOS (Break of Structure) simple version
+    bos_up = close > swing_high
+    bos_down = close < swing_low
 
-def get_candles(symbol, interval, limit=100):
-    url = f"https://api.bitunix.com/api/v1/market/kline?symbol={symbol}&interval={interval}&limit={limit}"
-    res = requests.get(url)
-    data = res.json()
-    return data['data']
+    signal = None
+    if bos_up and close > fib_618:
+        signal = {
+            "type": "LONG",
+            "entry": round(close, 2),
+            "sl": round(fib_50, 2),
+            "tp": round(close + (close - fib_50) * 1.5, 2),
+            "confidence": "HIGH"
+        }
+    elif bos_down and close < fib_618:
+        signal = {
+            "type": "SHORT",
+            "entry": round(close, 2),
+            "sl": round(fib_50, 2),
+            "tp": round(close - (fib_50 - close) * 1.5, 2),
+            "confidence": "HIGH"
+        }
 
-def analyze_trend(candles):
-    closes = [float(c[4]) for c in candles]
-    highs = [float(c[2]) for c in candles]
-    lows = [float(c[3]) for c in candles]
+    return signal
 
-    higher_highs = highs[-3:] == sorted(highs[-3:], reverse=True)
-    lower_lows = lows[-3:] == sorted(lows[-3:])
-    structure = 'BULLISH' if higher_highs else 'BEARISH' if lower_lows else 'RANGING'
+# === SEND TO DISCORD ===
+def send_discord_signal(pair, signal):
+    rr = round(abs(signal["tp"] - signal["entry"]) / abs(signal["entry"] - signal["sl"]), 2)
+    content = f"""
+🔥 **MASTER CALL: {pair} – {signal['type']}**
 
-    fib_low, fib_high = min(lows[-20:]), max(highs[-20:])
-    fib_levels = {
-        '0.618': fib_high - (fib_high - fib_low) * 0.618,
-        '0.5': fib_high - (fib_high - fib_low) * 0.5
-    }
+📍 Entry: `{signal['entry']}`
+🛑 Stop Loss: `{signal['sl']}`
+🎯 Take Profit: `{signal['tp']}`
+📊 Risk Reward: `{rr}`
+✅ Confidence Level: `{signal['confidence']} ☑️`
 
-    return structure, closes[-1], fib_levels
+Analisis berdasarkan:
+- Smart Money Concept (BOS + Struktur)
+- Fibonacci Retracement 0.5 & 0.618
+- Timeframe: {TIMEFRAME}
+    """.strip()
 
-def get_confidence_level(tf15, tf4h, rr, entry, sl, tp):
-    confidence = "MEDIUM"
-    if tf15 == tf4h:
-        confidence = "HIGH"
-        rr_factor = rr >= 2
-        entry_near_fib = abs(entry - sl) / entry < 0.03
-        if rr_factor and entry_near_fib:
-            confidence = "HIGH ✅"
-        elif rr > 1.5:
-            confidence = "MEDIUM ☑️"
-        else:
-            confidence = "LOW ⚠️"
-    else:
-        confidence = "LOW ⚠️"
-    return confidence
+    requests.post(DISCORD_WEBHOOK_URL, json={"content": content})
 
-def generate_master_call(symbol):
-    try:
-        results = {}
-        for tf in TIMEFRAMES:
-            candles = get_candles(symbol, tf)
-            structure, last_price, fib = analyze_trend(candles)
-            results[tf] = {"structure": structure, "price": last_price, "fib": fib}
+# === MAIN LOOP ===
+def run():
+    for pair in PAIRS:
+        candles = get_candles(pair)
+        if not candles:
+            continue
+        signal = analyze_smc_fibo(candles)
+        if signal:
+            send_discord_signal(pair, signal)
 
-        tf15 = results['15m']['structure']
-        tf4h = results['4h']['structure']
-
-        if tf15 == tf4h and tf15 != 'RANGING':
-            direction = "LONG" if tf15 == "BULLISH" else "SHORT"
-            entry = results['15m']['price']
-            fib = results['15m']['fib']
-            sl = round(fib['0.618'] if direction == "LONG" else fib['0.5'], 4)
-            tp = round(entry * (1.03 if direction == "LONG" else 0.97), 4)
-            rr = round(abs(tp - entry) / abs(entry - sl), 2)
-            confidence = get_confidence_level(tf15, tf4h, rr, entry, sl, tp)
-
-            message = f"""
-🔥 MASTER CALL: {symbol} – {direction}
-
-📍 Entry: {entry}
-🛑 Stop Loss: {sl}
-🎯 Take Profit: {tp}
-📊 Risk Reward: {rr}
-✅ Confidence Level: {confidence}
-
-Sinyal berdasarkan konfirmasi arah tren timeframe 15M & 4H (SMC+Fibonacci).
-            """.strip()
-
-            send_telegram(message)
-            send_discord(message)
-            print(f"[{datetime.now()}] ✅ Sent signal for {symbol}")
-        else:
-            print(f"[{datetime.now()}] ❌ No valid trend for {symbol}")
-    except Exception as e:
-        print(f"⚠️ Error for {symbol}: {e}")
-
-async def scheduler_loop():
-    while True:
-        print(f"🔁 Running analysis at {datetime.now()}...
-")
-        for symbol in SYMBOLS:
-            generate_master_call(symbol)
-            await asyncio.sleep(1.5)
-        await asyncio.sleep(3 * 60 * 60)
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(scheduler_loop())
-
-@app.get("/run")
-def manual_run():
-    for symbol in SYMBOLS:
-        generate_master_call(symbol)
-    return {"status": "ok", "message": "All signals checked manually."}
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+# Run once or schedule as needed
+run()
