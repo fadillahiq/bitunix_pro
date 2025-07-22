@@ -67,6 +67,8 @@ def format_call(sig):
 🎯 Take Profit: {sig['tp']}
 📊 Risk Reward: {rr}
 💯 Confidence Level: {confidence} ✅
+
+BITUNIX PRO
 """
 
 def send_to_telegram(text):
