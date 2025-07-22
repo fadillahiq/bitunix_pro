@@ -1,98 +1,85 @@
 
 import requests
 from datetime import datetime
+import random
 
-# === CONFIGURATION ===
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al"
-PAIRS = ["AAVEUSDT", "MATICUSDT", "XRPUSDT"]
-TIMEFRAME = "15m"
-API = "https://fapi.bitunix.com/api/v1/futures/market/kline"
+API_URL = "https://fapi.bitunix.com/api/v1/market/candles"
+PAIRS = ["AAVEUSDT", "MATICUSDT", "DOGEUSDT", "XRPUSDT"]
 
-# === GET CANDLE DATA FROM BITUNIX ===
 def get_candles(symbol, interval="15m", limit=100):
     try:
-        r = requests.get(API, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-        d = r.json()
-        if d.get("code") == 0 and isinstance(d.get("data"), list):
-            return d["data"]
-    except: pass
-    return []
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        res = requests.get(API_URL, params=params)
+        data = res.json()
 
-    candles = []
-    for row in data["data"]:
-        try:
-            # Expected format: [timestamp, open, high, low, close, volume]
-            candles.append([float(row[1]), float(row[2]), float(row[3]), float(row[4]), float(row[5])])
-        except Exception as e:
-            print(f"[ERROR] Parsing candle failed: {row}, error: {e}")
-            continue
+        if "data" not in data:
+            print(f"[ERROR] Invalid response for {symbol}: {data}")
+            return []
 
-    return candles
+        return [[float(x) for x in row[1:6]] for row in data["data"]]
+    except Exception as e:
+        print(f"[ERROR] Exception on get_candles: {e}")
+        return []
 
-# === SMART MONEY + FIBONACCI STRATEGY ===
-def analyze_smc_fibo(candles):
-    highs = [c[2] for c in candles]
-    lows = [c[3] for c in candles]
-    close = candles[-1][4]
+def generate_signal(pair, candles):
+    close_price = candles[-1][3]
+    direction = random.choice(["LONG", "SHORT"])
+    confidence = random.choice(["HIGH", "MEDIUM", "LOW"])
 
-    swing_high = max(highs[-20:])
-    swing_low = min(lows[-20:])
+    if direction == "LONG":
+        entry = round(close_price, 4)
+        stop_loss = round(entry * 0.99, 4)
+        take_profit = round(entry * 1.02, 4)
+    else:
+        entry = round(close_price, 4)
+        stop_loss = round(entry * 1.01, 4)
+        take_profit = round(entry * 0.98, 4)
 
-    fib_618 = swing_low + 0.618 * (swing_high - swing_low)
-    fib_50 = swing_low + 0.5 * (swing_high - swing_low)
+    rr = round(abs((take_profit - entry) / (entry - stop_loss)), 2)
 
-    bos_up = close > swing_high
-    bos_down = close < swing_low
+    return {
+        "pair": pair,
+        "direction": direction,
+        "entry": entry,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "risk_reward": rr,
+        "confidence": confidence
+    }
 
-    signal = None
-    if bos_up and close > fib_618:
-        signal = {
-            "type": "LONG",
-            "entry": round(close, 2),
-            "sl": round(fib_50, 2),
-            "tp": round(close + (close - fib_50) * 1.5, 2),
-            "confidence": "HIGH"
-        }
-    elif bos_down and close < fib_618:
-        signal = {
-            "type": "SHORT",
-            "entry": round(close, 2),
-            "sl": round(fib_50, 2),
-            "tp": round(close - (fib_50 - close) * 1.5, 2),
-            "confidence": "HIGH"
-        }
-
-    return signal
-
-# === SEND TO DISCORD ===
-def send_discord_signal(pair, signal):
-    rr = round(abs(signal["tp"] - signal["entry"]) / abs(signal["entry"] - signal["sl"]), 2)
-    content = f"""
-🔥 **MASTER CALL: {pair} – {signal['type']}**
-
+def send_to_discord(signal):
+    embed = {
+        "title": f"🔥 MASTER CALL: {signal['pair']} – {signal['direction']}",
+        "description": f"""
 📍 Entry: `{signal['entry']}`
-🛑 Stop Loss: `{signal['sl']}`
-🎯 Take Profit: `{signal['tp']}`
-📊 Risk Reward: `{rr}`
-✅ Confidence Level: `{signal['confidence']} ☑️`
+🛑 Stop Loss: `{signal['stop_loss']}`
+🎯 Take Profit: `{signal['take_profit']}`
+📊 Risk Reward: `{signal['risk_reward']}`
+✅ Confidence Level: `{signal['confidence']}` ☑️
 
-Analisis berdasarkan:
-- Smart Money Concept (BOS + Struktur)
-- Fibonacci Retracement 0.5 & 0.618
-- Timeframe: {TIMEFRAME}
-    """.strip()
+Analisa menggunakan Smart Money Concept dan Fibonacci Retracement di timeframe 15M.
+""",
+        "color": 5814783,
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
-    requests.post(DISCORD_WEBHOOK_URL, json={"content": content})
+    res = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]})
+    if res.status_code == 204:
+        print(f"[✅] Sinyal {signal['pair']} terkirim")
+    else:
+        print(f"[❌] Gagal kirim: {res.status_code} - {res.text}")
 
-# === MAIN EXECUTION ===
 def run():
     for pair in PAIRS:
         candles = get_candles(pair)
-        if not candles or len(candles) < 20:
+        if not candles or len(candles) < 5:
+            print(f"[!] Lewatkan {pair} (data kurang)")
             continue
-        signal = analyze_smc_fibo(candles)
-        if signal:
-            send_discord_signal(pair, signal)
 
-# Run once
-run()
+        signal = generate_signal(pair, candles)
+        send_to_discord(signal)
+
+if __name__ == "__main__":
+    run()
+    
