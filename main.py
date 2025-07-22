@@ -1,85 +1,96 @@
-
-import requests
+import requests, time, schedule
 from datetime import datetime
-import random
 
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al"
-API_URL = "https://fapi.bitunix.com/api/v1/market/candles"
-PAIRS = ["AAVEUSDT", "MATICUSDT", "DOGEUSDT", "XRPUSDT"]
+BOT_TOKEN = "7580552170:AAEGs8Z4HVhZgtnzRaK4VctZe6_fUL0pkz8"
+CHAT_ID = "5246334675"
 
-def get_candles(symbol, interval="15m", limit=100):
+PAIRS = [
+    "ETHUSDT", "BTCUSDT", "AAVEUSDT", "DOGEUSDT", "XRPUSDT",
+    "MATICUSDT", "SUIUSDT", "OPUSDT", "HBARUSDT", "PEPEUSDT",
+    "ARBUSDT", "INJUSDT", "RNDRUSDT", "LINKUSDT", "NEARUSDT"
+]
+
+API = "https://fapi.bitunix.com/api/v1/futures/market/kline"
+
+def get_klines(symbol, interval="15m", limit=50):
     try:
-        params = {"symbol": symbol, "interval": interval, "limit": limit}
-        res = requests.get(API_URL, params=params)
-        data = res.json()
+        r = requests.get(API, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
+        d = r.json()
+        if d.get("code") == 0 and isinstance(d.get("data"), list):
+            return d["data"]
+    except: pass
+    return []
 
-        if "data" not in data:
-            print(f"[ERROR] Invalid response for {symbol}: {data}")
-            return []
+def detect_signal(symbol):
+    k = get_klines(symbol)
+    if not k: return None
+    try:
+        closes = [float(i["close"]) for i in k]
+        highs = [float(i["high"]) for i in k]
+        lows  = [float(i["low"]) for i in k]
 
-        return [[float(x) for x in row[1:6]] for row in data["data"]]
-    except Exception as e:
-        print(f"[ERROR] Exception on get_candles: {e}")
-        return []
+        if len(closes) < 20: return None
 
-def generate_signal(pair, candles):
-    close_price = candles[-1][3]
-    direction = random.choice(["LONG", "SHORT"])
-    confidence = random.choice(["HIGH", "MEDIUM", "LOW"])
+        recent_high = max(highs[-20:])
+        recent_low = min(lows[-20:])
+        last_close = closes[-1]
 
-    if direction == "LONG":
-        entry = round(close_price, 4)
-        stop_loss = round(entry * 0.99, 4)
-        take_profit = round(entry * 1.02, 4)
+        fib_0 = recent_high
+        fib_1 = recent_low
+        diff = fib_0 - fib_1
+
+        fib_382 = fib_0 - 0.382 * diff
+        fib_50 = fib_0 - 0.5 * diff
+        fib_618 = fib_0 - 0.618 * diff
+
+        # Kondisi LONG (breakout atas + harga di atas fib50 + valid TP target)
+        if last_close > recent_high * 0.995 and last_close > fib_50:
+            sl = round(fib_618, 4)
+            tp = round(last_close + diff * 1.618, 4)
+            return {"symbol": symbol, "side": "LONG", "entry": last_close, "sl": sl, "tp": tp}
+
+        # Kondisi SHORT (break bawah + harga di bawah fib50 + valid TP target)
+        if last_close < recent_low * 1.005 and last_close < fib_50:
+            sl = round(fib_618, 4)
+            tp = round(last_close - diff * 1.618, 4)
+            return {"symbol": symbol, "side": "SHORT", "entry": last_close, "sl": sl, "tp": tp}
+    except: pass
+    return None
+
+def format_call(sig):
+    rr = round(abs(sig['tp'] - sig['entry']) / abs(sig['entry'] - sig['sl']), 2)
+    confidence = "HIGH" if rr > 2.5 else "MEDIUM" if rr > 1.5 else "LOW"
+    return f"""🔥 MASTER CALL: {sig['symbol']} – {sig['side']}
+
+📍 Entry: {sig['entry']}
+🛑 Stop Loss: {sig['sl']}
+🎯 Take Profit: {sig['tp']}
+📊 Risk Reward: {rr}
+💯 Confidence Level: {confidence} ✅
+"""
+
+def send_to_telegram(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+
+def job():
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Menganalisis...")
+    signals = [detect_signal(p) for p in PAIRS]
+    valids = [s for s in signals if s]
+    if valids:
+        for sig in valids:
+            msg = format_call(sig)
+            send_to_telegram(msg)
+            print(f"Sinyal dikirim: {sig['symbol']} - {sig['side']}")
     else:
-        entry = round(close_price, 4)
-        stop_loss = round(entry * 1.01, 4)
-        take_profit = round(entry * 0.98, 4)
+        print("Tidak ada sinyal valid.")
 
-    rr = round(abs((take_profit - entry) / (entry - stop_loss)), 2)
+# Jalankan sekali di awal
+job()
 
-    return {
-        "pair": pair,
-        "direction": direction,
-        "entry": entry,
-        "stop_loss": stop_loss,
-        "take_profit": take_profit,
-        "risk_reward": rr,
-        "confidence": confidence
-    }
+# Jadwalkan setiap 3 jam
+schedule.every(180).minutes.do(job)
 
-def send_to_discord(signal):
-    embed = {
-        "title": f"🔥 MASTER CALL: {signal['pair']} – {signal['direction']}",
-        "description": f"""
-📍 Entry: `{signal['entry']}`
-🛑 Stop Loss: `{signal['stop_loss']}`
-🎯 Take Profit: `{signal['take_profit']}`
-📊 Risk Reward: `{signal['risk_reward']}`
-✅ Confidence Level: `{signal['confidence']}` ☑️
-
-Analisa menggunakan Smart Money Concept dan Fibonacci Retracement di timeframe 15M.
-""",
-        "color": 5814783,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-    res = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]})
-    if res.status_code == 204:
-        print(f"[✅] Sinyal {signal['pair']} terkirim")
-    else:
-        print(f"[❌] Gagal kirim: {res.status_code} - {res.text}")
-
-def run():
-    for pair in PAIRS:
-        candles = get_candles(pair)
-        if not candles or len(candles) < 5:
-            print(f"[!] Lewatkan {pair} (data kurang)")
-            continue
-
-        signal = generate_signal(pair, candles)
-        send_to_discord(signal)
-
-if __name__ == "__main__":
-    run()
-    
+while True:
+    schedule.run_pending()
+    time.sleep(60)
