@@ -3,22 +3,29 @@ import requests, time
 from datetime import datetime
 
 # === CONFIGURATION ===
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al" # Altcoin stabil
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al"
+PAIRS = ["AAVEUSDT", "MATICUSDT", "XRPUSDT"]  # Altcoin stabil
 TIMEFRAME = "15m"
-PAIRS = [
-    "ETHUSDT", "BTCUSDT", "AAVEUSDT", "DOGEUSDT", "XRPUSDT",
-    "MATICUSDT", "SUIUSDT", "OPUSDT", "HBARUSDT", "PEPEUSDT",
-    "ARBUSDT", "INJUSDT", "RNDRUSDT", "LINKUSDT", "NEARUSDT"
-]
-API = "https://fapi.bitunix.com/api/v1/futures/market/kline"
+BASE_URL = "https://fapi.bitunix.com"
 
 # === FUNCTION TO GET CANDLESTICK DATA ===
 def get_candles(symbol, interval="15m", limit=100):
-    url = {API}
+    url = f"{BASE_URL}/api/v1/futures/market/kline"
     params = {"symbol": symbol.lower(), "interval": interval, "limit": limit}
-    res = requests.get(url, params=params).json()
-    candles = res.get("data", [])
-    return [[float(c) for c in item] for item in candles]
+    res = requests.get(url, params=params)
+
+    try:
+        data = res.json()
+    except Exception as e:
+        print(f"[ERROR] Failed to parse JSON for {symbol}: {e}")
+        return []
+
+    if not isinstance(data, dict) or "data" not in data:
+        print(f"[ERROR] Unexpected response structure for {symbol}: {data}")
+        return []
+
+    candles = data["data"]
+    return [[float(c) for c in item] for item in candles if len(item) >= 5]
 
 # === SMART MONEY + FIBONACCI STRATEGY ===
 def analyze_smc_fibo(candles):
