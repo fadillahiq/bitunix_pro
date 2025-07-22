@@ -6,24 +6,17 @@ from datetime import datetime
 DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al"
 PAIRS = ["AAVEUSDT", "MATICUSDT", "XRPUSDT"]
 TIMEFRAME = "15m"
-BASE_URL = "https://fapi.bitunix.com"
+API = "https://fapi.bitunix.com/api/v1/futures/market/kline"
 
 # === GET CANDLE DATA FROM BITUNIX ===
 def get_candles(symbol, interval="15m", limit=100):
-    url = "https://fapi.bitunix.com/api/v1/futures/market/kline"
-    params = {"symbol": symbol.upper(), "interval": interval, "limit": limit}
-    res = requests.get(url, params=params)
-
     try:
-        data = res.json()
-    except Exception as e:
-        print(f"[ERROR] JSON decode failed: {e}")
-        print("Raw Response:", res.text)
-        return []
-
-    if "data" not in data or not isinstance(data["data"], list):
-        print(f"[ERROR] Unexpected response: {data}")
-        return []
+        r = requests.get(API, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
+        d = r.json()
+        if d.get("code") == 0 and isinstance(d.get("data"), list):
+            return d["data"]
+    except: pass
+    return []
 
     candles = []
     for row in data["data"]:
