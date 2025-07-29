@@ -1,98 +1,145 @@
-import requests, time, schedule
+import requests
+import time
 from datetime import datetime
+import schedule
 
-BOT_TOKEN = "7580552170:AAEGs8Z4HVhZgtnzRaK4VctZe6_fUL0pkz8"
-CHAT_ID = "5246334675"
+# DISCORD
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1396241698929119273/9rzJbZXVoEgBWEZk69njsnFJe_whzG9av58lwBewII9owdqiP7-F0uDvM7f_DZzrh1Al"
 
-PAIRS = [
-    "ETHUSDT", "BTCUSDT", "AAVEUSDT", "DOGEUSDT", "XRPUSDT",
-    "MATICUSDT", "SUIUSDT", "OPUSDT", "HBARUSDT", "PEPEUSDT",
-    "ARBUSDT", "INJUSDT", "RNDRUSDT", "LINKUSDT", "NEARUSDT",
-    "SOLUSDT"
-]
+# PAIRS
+PAIRS = ["HBARUSDT", "PENGUUSDT", "DOGEUSDT", "TAOUSDT", "ETHUSDT"]
 
-API = "https://fapi.bitunix.com/api/v1/futures/market/kline"
-
-def get_klines(symbol, interval="15m", limit=50):
+# GET KLINE
+def get_klines(pair, interval="15m", limit=50):
+    url = f"https://fapi.bitunix.com/api/v1/contract/quote/klines?symbol={pair}&interval={interval}&limit={limit}"
     try:
-        r = requests.get(API, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-        d = r.json()
-        if d.get("code") == 0 and isinstance(d.get("data"), list):
-            return d["data"]
-    except: pass
-    return []
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        return data.get("data", [])
+    except:
+        return []
 
-def detect_signal(symbol):
-    k = get_klines(symbol)
-    if not k: return None
-    try:
-        closes = [float(i["close"]) for i in k]
-        highs = [float(i["high"]) for i in k]
-        lows  = [float(i["low"]) for i in k]
+# DETECT SMC + PA
+def detect_smc_signal(kline_items, pair):
+    candles = [{
+        "time": int(k["time"]),
+        "open": float(k["open"]),
+        "high": float(k["high"]),
+        "low": float(k["low"]),
+        "close": float(k["close"]),
+        "volume": float(k["baseVol"])
+    } for k in kline_items]
 
-        if len(closes) < 20: return None
+    if len(candles) < 20:
+        return None
 
-        recent_high = max(highs[-20:])
-        recent_low = min(lows[-20:])
-        last_close = closes[-1]
+    last = candles[-1]
+    prev = candles[-2]
 
-        fib_0 = recent_high
-        fib_1 = recent_low
-        diff = fib_0 - fib_1
+    last_close = last["close"]
+    last_open = last["open"]
+    prev_close = prev["close"]
+    prev_open = prev["open"]
 
-        fib_382 = fib_0 - 0.382 * diff
-        fib_50 = fib_0 - 0.5 * diff
-        fib_618 = fib_0 - 0.618 * diff
+    # Engulfing Pattern
+    bullish_engulfing = last_close > last_open and prev_close < prev_open and last_close > prev_open and last_open < prev_close
+    bearish_engulfing = last_close < last_open and prev_close > prev_open and last_close < prev_open and last_open > prev_close
 
-        # Kondisi LONG (breakout atas + harga di atas fib50 + valid TP target)
-        if last_close > recent_high * 0.995 and last_close > fib_50:
-            sl = round(fib_618, 4)
-            tp = round(last_close + diff * 1.618, 4)
-            return {"symbol": symbol, "side": "LONG", "entry": last_close, "sl": sl, "tp": tp}
+    # Struktur harga
+    highs = [c["high"] for c in candles[-6:-1]]
+    lows = [c["low"] for c in candles[-6:-1]]
+    swing_high = max(highs)
+    swing_low = min(lows)
 
-        # Kondisi SHORT (break bawah + harga di bawah fib50 + valid TP target)
-        if last_close < recent_low * 1.005 and last_close < fib_50:
-            sl = round(fib_618, 4)
-            tp = round(last_close - diff * 1.618, 4)
-            return {"symbol": symbol, "side": "SHORT", "entry": last_close, "sl": sl, "tp": tp}
-    except: pass
+    # BOS
+    valid_bullish_bos = bullish_engulfing and last_close > swing_high
+    valid_bearish_bos = bearish_engulfing and last_close < swing_low
+
+    # Setup Entry
+    if valid_bullish_bos:
+        entry = last_close
+        sl = swing_low
+        tp = round(entry + (entry - sl) * 2, 6)
+        rr = round((tp - entry) / (entry - sl), 2)
+        confidence = "HIGH" if rr >= 2 else "MEDIUM"
+
+        return f"""
+🔥 MASTER CALL: {pair.upper()} – LONG
+
+📍 Entry: {entry}
+🛑 Stop Loss: {sl}
+🎯 Take Profit: {tp}
+📊 Risk Reward: {rr}
+✅ Confidence Level: {confidence} ☑️
+
+Sinyal berdasarkan Smart Money Concept dan Price Action:
+- Break of Structure (BOS) terkonfirmasi.
+- Pola Bullish Engulfing valid sebagai sinyal reversal.
+- Entry mengikuti momentum dan validasi struktur pasar (HH–HL).
+
+🎯 Rekomendasi: Pantau konfirmasi lanjutan atau entry segera jika harga retest.
+        """.strip()
+
+    elif valid_bearish_bos:
+        entry = last_close
+        sl = swing_high
+        tp = round(entry - (sl - entry) * 2, 6)
+        rr = round((entry - tp) / (sl - entry), 2)
+        confidence = "HIGH" if rr >= 2 else "MEDIUM"
+
+        return f"""
+🔥 MASTER CALL: {pair.upper()} – SHORT
+
+📍 Entry: {entry}
+🛑 Stop Loss: {sl}
+🎯 Take Profit: {tp}
+📊 Risk Reward: {rr}
+✅ Confidence Level: {confidence} ☑️
+
+Sinyal berdasarkan Smart Money Concept dan Price Action:
+- Break of Structure (BOS) turun terkonfirmasi.
+- Pola Bearish Engulfing valid sebagai sinyal reversal.
+- Entry mengikuti momentum dan validasi struktur pasar (LH–LL).
+
+🎯 Rekomendasi: Entry segera atau tunggu retest ke area supply.
+        """.strip()
+
     return None
 
-def format_call(sig):
-    rr = round(abs(sig['tp'] - sig['entry']) / abs(sig['entry'] - sig['sl']), 2)
-    confidence = "HIGH" if rr > 2.5 else "MEDIUM" if rr > 1.5 else "LOW"
-    return f"""🔥 MASTER CALL: {sig['symbol']} – {sig['side']}
+# KIRIM KE DISCORD
+def send_to_discord(message):
+    data = {"content": message}
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=data)
+    except Exception as e:
+        print("❌ Gagal kirim:", e)
 
-📍 Entry: {sig['entry']}
-🛑 Stop Loss: {sig['sl']}
-🎯 Take Profit: {sig['tp']}
-📊 Risk Reward: {rr}
-💯 Confidence Level: {confidence} ✅
+# MAIN
+def run_signal_bot():
+    print(f"\n🚀 Mengecek sinyal valid berdasarkan SMC... {datetime.now().strftime('%H:%M:%S')} WIB")
+    best_signal = None
 
-BITUNIX PRO
-"""
+    for pair in PAIRS:
+        klines = get_klines(pair)
+        if not klines:
+            continue
+        signal = detect_smc_signal(klines, pair)
+        if signal:
+            best_signal = signal
+            break  # kirim sinyal terbaik pertama yang valid
 
-def send_to_telegram(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
-
-def job():
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Menganalisis...")
-    signals = [detect_signal(p) for p in PAIRS]
-    valids = [s for s in signals if s]
-    if valids:
-        for sig in valids:
-            msg = format_call(sig)
-            send_to_telegram(msg)
-            print(f"Sinyal dikirim: {sig['symbol']} - {sig['side']}")
+    if best_signal:
+        send_to_discord(best_signal)
+        print("✅ Sinyal dikirim!")
     else:
-        print("Tidak ada sinyal valid.")
+        send_to_discord("tidak ada sinyal valid saat ini")
+        print("❌ Tidak ada sinyal valid.")
 
-# Jalankan sekali di awal
-job()
+# JADWAL TIAP 3 JAM
+schedule.every(3).hours.do(run_signal_bot)
 
-# Jadwalkan setiap 3 jam
-schedule.every(180).minutes.do(job)
+print("🤖 Bot sinyal crypto siap jalan (tiap 3 jam)...")
+run_signal_bot()
 
 while True:
     schedule.run_pending()
